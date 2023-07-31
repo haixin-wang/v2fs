@@ -1,0 +1,47 @@
+[package]
+name = "rusqlite"
+# Note: Update version in README.md when you change this.
+version = "0.28.0"
+authors = ["The rusqlite developers"]
+edition = "2018"
+description = "Ergonomic wrapper for SQLite"
+repository = "https://github.com/rusqlite/rusqlite"
+documentation = "http://docs.rs/rusqlite/"
+readme = "README.md"
+keywords = ["sqlite", "database", "ffi"]
+license = "MIT"
+categories = ["database"]
+
+exclude = [
+  "/.github/*",
+  "/.gitattributes",
+  "/appveyor.yml",
+  "/Changelog.md",
+  "/clippy.toml",
+  "/codecov.yml",
+]
+
+[lib]
+name = "rusqlite"
+
+[features]
+bundled = ["modern_sqlite"]
+buildtime_bindgen = []
+modern_sqlite = []
+
+[dependencies]
+bitflags = "1.2"
+hashlink = { path = "../hashlink" }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+fallible-iterator = { version = "0.2", default-features = false }
+fallible-streaming-iterator = { version = "0.1", default-features = false }
+smallvec = "1.6.1"
+sgx_libc = { path = "../rust-sgx-sdk/sgx_libc" }
+sgx_tstd = { path = "../rust-sgx-sdk/sgx_tstd" }
+sgx_types = { path = "../rust-sgx-sdk/sgx_types" }
+
+
+[dependencies.libsqlite3-sys]
+path = "../libsqlite3-sys"
+version = "0.25.0"
+

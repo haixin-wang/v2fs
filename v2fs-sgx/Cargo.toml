@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "app",
+    "hashlink", 
+    "merkle_tree",
+    "libsqlite3-sys", 
+    "rusqlite",
+    "vfs_common"
+]
+exclude = [
+    "enclave",
+    "rust-sgx-sdk",
+]

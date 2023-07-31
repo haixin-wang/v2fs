@@ -1,0 +1,32 @@
+[package]
+name = "vsqlite_enclave"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "vsqlite_enclave_rust"
+crate-type = ["staticlib"]
+
+[dependencies]
+anyhow = { version = "1.0", default-features = false }
+blake2b_simd = { version = "1.0", default-features = false }
+hashbrown = { version = "0.9", features = ["serde"] }
+hex = { git = "https://github.com/mesalock-linux/rust-hex-sgx.git" }
+libsqlite3-sys = { path = "../libsqlite3-sys" }
+merkle_tree = { path = "../merkle_tree" }
+vfs_common = { path = "../vfs_common" }
+postcard = { version = "0.7.3", features = ["alloc"] }
+rusqlite = { path = "../rusqlite", features = ["buildtime_bindgen"]}
+sgx_rand = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
+sgx_tstd = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
+sgx_types = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+tracing = { version = "0.1.37", default-features = false }
+
+[patch.'https://github.com/apache/teaclave-sgx-sdk.git']
+sgx_libc = { path = "../rust-sgx-sdk/sgx_libc" }
+sgx_rand = { path = "../rust-sgx-sdk/sgx_rand" }
+sgx_tstd = { path = "../rust-sgx-sdk/sgx_tstd" }
+sgx_types = { path = "../rust-sgx-sdk/sgx_types" }

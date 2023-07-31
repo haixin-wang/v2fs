@@ -1,0 +1,12 @@
+[package]
+name = "merkle_tree"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0", default-features = false }
+blake2b_simd = { version = "1.0", default-features = false }
+hashbrown = { version = "0.9", features = ["serde"] }
+postcard = { version = "0.7.3", features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+vfs_common = { path = "../vfs_common" }

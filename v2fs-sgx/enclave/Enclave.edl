@@ -1,0 +1,31 @@
+enclave {
+    from "sgx_tstd.edl" import *;
+    from "sgx_stdio.edl" import *;
+    from "sgx_backtrace.edl" import *;
+    from "sgx_tstdc.edl" import *;
+    trusted {
+        public sgx_status_t ecall_exec([in, size=len] const uint8_t* stmt, size_t len);
+    };
+
+    untrusted {
+        int32_t ocall_file_open([in, size=len] const uint8_t* str, size_t len);
+        int32_t ocall_file_delete([in, size=len] const uint8_t* str, size_t len);
+        int32_t ocall_file_exists([in, size=len] const uint8_t* str, size_t len, [out] int32_t* is_existed);
+        int32_t ocall_file_read([in, size=len] const uint8_t* str, size_t len, uint64_t ofset, [out, size=amt] uint8_t* buf, size_t amt);
+        int32_t ocall_file_write([in, size=len] const uint8_t* str, size_t len, uint64_t ofset, [in, size=amt] const uint8_t* input_buf, size_t amt);
+        int32_t ocall_file_trancate([in, size=len] const uint8_t* str, size_t len, uint64_t size);
+        int32_t ocall_file_flash([in, size=len] const uint8_t* str, size_t len);
+        int32_t ocall_file_size([in, size=len] const uint8_t* str, size_t len, [out] uint64_t* f_size);
+        int32_t ocall_close_tmp_files();
+        int32_t ocall_sleep(uint64_t n_micro, [out] int32_t* elapsed_time);
+        int32_t ocall_cur_time([out] double* cur_time);
+        int32_t ocall_cur_time_i64([out] int64_t* cur_time);
+        int32_t ocall_fill_rand_bytes([out, size=len] int8_t* dest, size_t len);
+        int32_t ocall_get_read_proof_len([in, size=len] const uint8_t* ptr, size_t len, [out] size_t* p_len);
+        int32_t ocall_get_read_proof_with_len([in, size=len] const uint8_t* ptr, size_t len, [out, size=predicated_p_len] uint8_t* proof_ptr, size_t predicated_p_len, [out] size_t* real_p_len);
+        int32_t ocall_get_read_proof([in, size=len] const uint8_t* ptr, size_t len, [out, size=p_len] uint8_t* proof_ptr, size_t p_len);
+        int32_t ocall_get_merkle_root([out, size=len] uint8_t* ptr, size_t len);
+        int32_t ocall_get_node([in, size=id_len] const uint8_t* id_ptr, size_t id_len, [out, size=len] uint8_t* ptr, size_t len);
+        int32_t ocall_update_merkle_db([in, size=len] const uint8_t* ptr, size_t len);
+    };
+};

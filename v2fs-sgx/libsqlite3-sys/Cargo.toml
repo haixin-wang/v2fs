@@ -1,0 +1,21 @@
+[package]
+name = "libsqlite3-sys"
+version = "0.25.2"
+authors = ["The rusqlite developers"]
+edition = "2018"
+repository = "https://github.com/rusqlite/rusqlite"
+description = "Native bindings to the libsqlite3 library"
+license = "MIT"
+links = "sqlite3"
+build = "build.rs"
+keywords = ["sqlite", "sqlcipher", "ffi"]
+categories = ["external-ffi-bindings"]
+
+[dependencies]
+sgx_libc = { path = "../rust-sgx-sdk/sgx_libc" }
+sgx_tstd = { path = "../rust-sgx-sdk/sgx_tstd" }
+sgx_types = { path = "../rust-sgx-sdk/sgx_types" }
+
+[build-dependencies]
+bindgen = { version = "0.63" }
+cc = { version = "1.0" }
