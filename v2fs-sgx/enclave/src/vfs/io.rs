@@ -1,7 +1,7 @@
 use std::ffi::{c_int, c_void};
 use std::string::String;
 use super::server_vfs::{ServerFileState, CachePage};
-use vfs_common::{MAIN_PATH, PAGE_SIZE, page::{PageId}};
+use vfs_common::{MAIN_PATH, PAGE_SIZE, page::{PageId}, UPDATE_OPT_LEVEL};
 use anyhow::{Context, Result};
 use libsqlite3_sys as ffi;
 use sgx_types::sgx_status_t;
@@ -92,13 +92,15 @@ pub unsafe extern "C" fn s_read(
         let read_map = &mut file_state.read_map;
         let write_map = &file_state.write_map;
         let (start_point, p_ids) = compute_page_ids(i_ofst as u64, i_amt as u64);
-        // println!("involved page ids: {:?}", p_ids);
-        // let buf_len: usize = PAGE_SIZE * p_ids.len();
         let buf_ofst = i_ofst as u64 - start_point;
-        // println!("buf_ofst: {}, i_amt: {}", buf_ofst, i_amt);
+
+        let buf = if UPDATE_OPT_LEVEL == 2 {
+            collect_page_bytes_batch(&f_name_buf, &p_ids, read_map, write_map)
+        } else {
+            collect_page_bytes_base(&f_name_buf, &p_ids, read_map, write_map)
+        };
         // let buf = collect_page_bytes_batch(&f_name_buf, &p_ids, read_map, write_map);
-        let buf = collect_page_bytes_base(&f_name_buf, &p_ids, read_map, write_map);
-        // println!("collected: {:?}", buf);
+        // let buf = collect_page_bytes_base(&f_name_buf, &p_ids, read_map, write_map);
         let mut cursor = Cursor::new(buf);
         match cursor.seek(SeekFrom::Start(buf_ofst)) {
             Ok(o) => {
@@ -210,6 +212,8 @@ fn collect_page_bytes_batch(
     res
 }
 
+
+
 fn read_page(f_name_buf: &[u8], p_id: &PageId) -> Vec<u8> {
     let mut bytes = vec![0 as u8; PAGE_SIZE];
     let mut retval: i32 = 0;
@@ -262,7 +266,12 @@ pub unsafe extern "C" fn s_write(
 
         let (start_point, p_ids) = compute_page_ids(i_ofst as u64, i_amt as u64);
 
-        retval = do_write_base(p_ids, f_name_buf, start_point, i_ofst as u64, i_amt as usize, write_map, &input_data);
+        if UPDATE_OPT_LEVEL == 2 {
+            retval = do_write_batch(p_ids, start_point, i_ofst as u64, i_amt as usize, write_map, &input_data);
+        } else {
+            retval = do_write_base(p_ids, f_name_buf, start_point, i_ofst as u64, i_amt as usize, write_map, &input_data);
+        }
+        
         retval
     }
 }
@@ -330,8 +339,79 @@ fn do_write_base(
 
 }
 
-fn do_write_batch() -> c_int {
-    todo!()
+fn do_write_batch(
+    p_ids: Vec<PageId>,
+    start_point: u64,
+    i_ofst: u64,
+    i_amt: usize,
+    write_map: &mut HashMap<PageId, CachePage>,
+    input_data: &[u8],
+) -> c_int {
+    let mut total_bytes = Vec::<u8>::new();
+    let mut meta_data = HashMap::new();
+    for p_id in &p_ids {
+        let mut bytes = if let Some(cache_p) = write_map.remove(p_id) {
+            meta_data.insert(*p_id, (cache_p.get_offset(), cache_p.get_len()));
+            cache_p.to_bytes()
+        } else {
+            meta_data.insert(*p_id, (0, 0));
+            vec![0_u8; PAGE_SIZE]
+        };
+        total_bytes.append(&mut bytes);
+    }
+
+    let buf_ofst = i_ofst - start_point;
+    let mut cursor = Cursor::new(total_bytes);
+    match cursor.seek(SeekFrom::Start(buf_ofst)) {
+        Ok(o) => {
+            if o != buf_ofst {
+                println!("seek position not correct");
+            }
+        }
+        Err(_) => {
+            println!("seek err happened");
+        }
+    }
+    if let Err(_err) = cursor.write_all(&input_data) {
+        println!("write err");
+    }
+    let mut buf = cursor.into_inner();
+    let mut ofst = (i_ofst - start_point) as usize;
+    let mut total_len = i_amt;
+    for p_id in &p_ids {
+        let bytes = buf.split_off(PAGE_SIZE);
+        let len = if total_len + ofst > PAGE_SIZE {
+            PAGE_SIZE - ofst
+        } else {
+            total_len
+        };
+        let (old_ofst, old_len) = meta_data.remove(p_id).unwrap();
+        let cache_p;
+        if old_len == 0 {
+            cache_p = CachePage::new(ofst, len, buf);
+        } else {
+            let res_ofst = if old_ofst < ofst {
+                old_ofst
+            } else {
+                ofst
+            };
+            let old_end_point = old_ofst + old_len;
+            let new_end_point = ofst + len;
+            let res_len = if old_end_point > new_end_point {
+                old_end_point - res_ofst
+            } else {
+                new_end_point - res_ofst
+            };
+            cache_p = CachePage::new(res_ofst, res_len, buf);
+        }
+        buf = bytes;
+        write_map.insert(*p_id, cache_p);
+        
+        ofst = 0;
+        total_len -= len;
+    }
+
+    0
 }
 
 fn compute_page_ids(ofst: u64, len: u64) -> (u64, Vec<PageId>) {

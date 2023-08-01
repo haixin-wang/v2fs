@@ -89,4 +89,3 @@ INSERT INTO person VALUES (97, 'Name7', 4000)
 INSERT INTO person VALUES (98, 'Name8', 3000)
 INSERT INTO person VALUES (99, 'Name9', 5000)
 INSERT INTO person VALUES (100, 'Name10', 5000)
-

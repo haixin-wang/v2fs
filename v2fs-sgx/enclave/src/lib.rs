@@ -30,17 +30,11 @@ pub extern "C" fn ecall_exec(stmt_ptr: *const u8, len: usize) -> sgx_status_t {
     let stmts =
         postcard::from_bytes::<Vec<String>>(&bytes).expect("failed to cast bytes to Vec<String>");
 
-    for stmt in stmts {
-        if exec_stmt(&stmt) != 0 {
-            return sgx_status_t::SGX_ERROR_UNEXPECTED;
-        }
+    if exec_stmt_in_batch(&stmts) == 0 {
+        sgx_status_t::SGX_SUCCESS
+    } else {
+        sgx_status_t::SGX_ERROR_UNEXPECTED
     }
-    return sgx_status_t::SGX_SUCCESS;
-    // if exec_stmt_in_batch(&stmts) == 0 {
-    //     sgx_status_t::SGX_SUCCESS
-    // } else {
-    //     sgx_status_t::SGX_ERROR_UNEXPECTED
-    // }
 }
 
 #[allow(dead_code)]
@@ -57,7 +51,6 @@ fn exec_stmt(stmt: &str) -> u32 {
     0
 }
 
-#[allow(dead_code)]
 fn exec_stmt_in_batch(stmts: &Vec<String>) -> u32 {
     let mut conn = Connection::open_with_flags_and_vfs(
         MAIN_PATH,

@@ -1,6 +1,7 @@
-use vfs_common::{TMP_FILE_PATH, MAIN_PATH, MERKLE_PATH, page::PageId, digest::{Digest, Digestible}};
+use anyhow::{Result, bail};
+use vfs_common::{TMP_FILE_PATH, MAIN_PATH, MERKLE_PATH, page::PageId, digest::{Digest, Digestible}, PAGE_SIZE};
 use rand::Rng;
-use std::io::{ErrorKind, Result};
+use std::io::{ErrorKind};
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom, Write},
@@ -10,7 +11,7 @@ use std::{
 };
 use time;
 use crate::{MerkleDB, NodeId};
-use merkle_tree::{read::ReadContext, write::WriteContext, proof::Proof, storage::{ReadInterface, WriteInterface}};
+use merkle_tree::{read::ReadContext, write::WriteContext, proof::Proof, storage::{ReadInterface, WriteInterface, MerkleNode}};
 use std::ptr::copy_nonoverlapping;
 
 #[no_mangle]
@@ -122,11 +123,11 @@ pub unsafe extern "C" fn ocall_file_read(
 }
 
 fn file_update_open(path: &str) -> Result<File> {
-    fs::OpenOptions::new()
+    Ok(fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(path)
+        .open(path)?)
 }
 
 #[no_mangle]
@@ -159,7 +160,6 @@ pub unsafe extern "C" fn ocall_file_write(
 
     unsafe {
         let data = slice::from_raw_parts(buf, amt);
-        trace!("{:?}", data);
         if let Err(_err) = file.write_all(data) {
             return 778; // ffi::SQLITE_IOERR_WRITE
         }
@@ -299,7 +299,10 @@ pub unsafe extern "C" fn ocall_get_read_proof_with_len(
     let p_ids: Vec<PageId> =
         postcard::from_bytes::<Vec<PageId>>(&bytes).unwrap();
 
+    let timer = howlong::ProcessCPUTimer::new();
     let proof = gen_proof(p_ids);
+    let time = timer.elapsed().real.as_micros() / 1000;
+    println!("proof gen time: {} ms", time);
 
     let p_bytes = match postcard::to_allocvec(&proof) {
         Ok(buf) => buf,
@@ -309,11 +312,199 @@ pub unsafe extern "C" fn ocall_get_read_proof_with_len(
         }
     };
     let real_proof_len = p_bytes.len();
-    println!("dbg: real proof len: {}", real_proof_len);
+    println!("proof size: {} byte", real_proof_len);
+
     *real_p_len = real_proof_len;
     copy_nonoverlapping(p_bytes.as_ptr(), proof_ptr, real_proof_len);
     0
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn ocall_get_node(
+    id_ptr: *const u8, 
+    id_len: usize,
+    ptr: *mut u8, 
+    len: usize,
+) -> i32 {
+    let bytes: Vec<u8> = slice::from_raw_parts(id_ptr, id_len).to_vec();
+    let n_id: NodeId =
+        postcard::from_bytes::<NodeId>(&bytes).unwrap();
+    let merkle_db = MerkleDB::open_read_only(Path::new(MERKLE_PATH)).expect("Cannot open MerkleDB");
+    let node = merkle_db.get_node(&n_id.to_digest()).unwrap();
+
+    let bytes = match postcard::to_allocvec(&node) {
+        Ok(buf) => buf,
+        Err(e) => {
+            println!("failed to cast root info to bytes, reason: {:?}", e);
+            return 1;
+        }
+    };
+    copy_nonoverlapping(bytes.as_ptr(), ptr, len);
+
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ocall_get_nodes_with_len(
+    ptr: *const u8, 
+    len: usize, 
+    nodes_ptr: *mut u8, 
+    _predicated_len: usize,
+    real_len: *mut usize,
+) -> i32 {
+    let bytes: Vec<u8> = slice::from_raw_parts(ptr, len).to_vec();
+    let n_ids: Vec<NodeId> =
+        postcard::from_bytes::<Vec<NodeId>>(&bytes).unwrap();
+    let mut pages_info = Vec::<(NodeId, Option<MerkleNode>)>::new();
+    let merkle_db = MerkleDB::open_read_only(Path::new(MERKLE_PATH)).expect("Cannot open MerkleDB");
+    for n_id in n_ids {
+        let node = merkle_db.get_node(&n_id.to_digest()).unwrap();
+        pages_info.push((n_id, node));
+    }
+
+    let bytes = match postcard::to_allocvec(&pages_info) {
+        Ok(buf) => buf,
+        Err(e) => {
+            println!("failed to cast root info to bytes, reason: {:?}", e);
+            return 1;
+        }
+    };
+
+    let real_nodes_len = bytes.len();
+    *real_len = real_nodes_len;
+    copy_nonoverlapping(bytes.as_ptr(), nodes_ptr, real_nodes_len);
+
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ocall_read_pages_with_len(
+    ptr: *const u8, 
+    len: usize, 
+    pages_ptr: *mut u8, 
+    _predicated_p_len: usize,
+    real_p_len: *mut usize,
+) -> i32 {
+    let bytes: Vec<u8> = slice::from_raw_parts(ptr, len).to_vec();
+    let p_ids: Vec<PageId> =
+        postcard::from_bytes::<Vec<PageId>>(&bytes).unwrap();
+    let mut pages_info = Vec::<(PageId, Vec<u8>)>::new();
+    for p_id in p_ids {
+        let page = match read_page(p_id) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("failed to read page {:?}", p_id);
+                println!("fail reason:  {:?}", e);
+                return 1
+            },
+        };
+        pages_info.push((p_id, page));
+    }
+    let p_bytes = match postcard::to_allocvec(&pages_info) {
+        Ok(buf) => buf,
+        Err(e) => {
+            println!("failed to cast Proof to bytes, reason: {:?}", e);
+            return 1;
+        }
+    };
+
+    let real_pages_len = p_bytes.len();
+    *real_p_len = real_pages_len;
+    copy_nonoverlapping(p_bytes.as_ptr(), pages_ptr, real_pages_len);
+    0
+}
+
+fn read_page(p_id: PageId) -> Result<Vec<u8>> {
+    let ofset = p_id.get_id() as u64 * PAGE_SIZE as u64;
+
+    let mut file = match std::fs::File::open(&MAIN_PATH) {
+        Ok(f) => f,
+        Err(_) => {
+            println!("cannot open");
+            bail!("cannot open main file"); // ffi::SQLITE_CANTOPEN
+        }
+    };
+
+    // move the cursor to the offset
+    match file.seek(SeekFrom::Start(ofset)) {
+        Ok(o) => {
+            if o != ofset {
+                println!("io err1");
+                bail!("io error read"); // ffi::SQLITE_IOERR_READ
+            }
+        }
+        Err(_) => {
+            println!("io err2");
+            bail!("io error read"); // ffi::SQLITE_IOERR_READ
+        }
+    }
+
+    let mut bytes = vec![0 as u8; PAGE_SIZE];
+    
+    if let Err(err) = std::io::Read::read_exact(&mut file, &mut bytes) {
+        let kind = err.kind();
+        if kind == std::io::ErrorKind::UnexpectedEof {
+            println!("len not enough");
+        } else {
+            println!("io err3");
+            bail!("io error read");
+        }
+    }
+    
+    Ok(bytes)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ocall_write_pages(
+    ptr: *const u8, 
+    len: usize,
+) -> i32 {
+    let bytes: Vec<u8> = slice::from_raw_parts(ptr, len).to_vec();
+    let modif =
+        postcard::from_bytes::<Vec<(PageId, Vec<u8>)>>(&bytes).unwrap();
+
+    for (p_id, bytes) in modif {
+        match write_page(p_id, bytes) {
+            Ok(_) => {},
+            Err(_) => {return 1;},
+        }
+    }
+
+    0
+}
+
+fn write_page(p_id: PageId, bytes: Vec<u8>) -> Result<()> {
+    let ofst = p_id.get_id() as u64 * PAGE_SIZE as u64;
+
+    let mut file = match file_update_open(&MAIN_PATH) {
+        Ok(f) => f,
+        Err(_) => {
+            trace!("cannot open");
+            bail!("cannot open main file");
+        }
+    };
+
+    // move the cursor to the offset
+    match file.seek(SeekFrom::Start(ofst)) {
+        Ok(o) => {
+            if o != ofst {
+                trace!("io err1");
+                bail!("io error read"); 
+            }
+        }
+        Err(_) => {
+            trace!("io err2");
+            bail!("io error read"); 
+        }
+    }
+
+    if let Err(_err) = file.write_all(&bytes) {
+        bail!("io error write"); 
+    }
+
+    Ok(())
+}
+
 
 #[no_mangle]
 pub unsafe extern "C" fn ocall_get_read_proof(
@@ -326,7 +517,12 @@ pub unsafe extern "C" fn ocall_get_read_proof(
     let p_ids: Vec<PageId> =
         postcard::from_bytes::<Vec<PageId>>(&bytes).unwrap();
 
+    let timer = howlong::ProcessCPUTimer::new();
     let proof = gen_proof(p_ids);
+
+    let time = timer.elapsed().real.as_micros() / 1000;
+    println!("read proof gen time: {} ms", time);
+
     let p_bytes = match postcard::to_allocvec(&proof) {
         Ok(buf) => buf,
         Err(e) => {
@@ -334,6 +530,9 @@ pub unsafe extern "C" fn ocall_get_read_proof(
             return 1;
         }
     };
+    let real_proof_len = p_bytes.len();
+    println!("read proof size: {} byte", real_proof_len);
+
     copy_nonoverlapping(p_bytes.as_ptr(), proof_ptr, proof_len);
 
     0
@@ -373,36 +572,14 @@ pub unsafe extern "C" fn ocall_get_merkle_root(ptr: *mut u8, len: usize) -> i32 
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ocall_get_node(
-    id_ptr: *const u8, 
-    id_len: usize,
-    ptr: *mut u8, 
-    len: usize,
-) -> i32 {
-    let bytes: Vec<u8> = slice::from_raw_parts(id_ptr, id_len).to_vec();
-    let n_id: NodeId =
-        postcard::from_bytes::<NodeId>(&bytes).unwrap();
-    let merkle_db = MerkleDB::open_read_only(Path::new(MERKLE_PATH)).expect("Cannot open MerkleDB");
-    let node = merkle_db.get_node(&n_id.to_digest()).unwrap();
 
-    let bytes = match postcard::to_allocvec(&node) {
-        Ok(buf) => buf,
-        Err(e) => {
-            println!("failed to cast root info to bytes, reason: {:?}", e);
-            return 1;
-        }
-    };
-    copy_nonoverlapping(bytes.as_ptr(), ptr, len);
-
-    0
-}
 
 #[no_mangle]
 pub unsafe extern "C" fn ocall_update_merkle_db(
     ptr: *const u8, 
     len: usize,
 ) -> i32 {
+    let timer = howlong::ProcessCPUTimer::new();
     let bytes: Vec<u8> = slice::from_raw_parts(ptr, len).to_vec();
     let modif =
         postcard::from_bytes::<Vec<(PageId, Digest)>>(&bytes).unwrap();
@@ -421,11 +598,16 @@ pub unsafe extern "C" fn ocall_update_merkle_db(
     merkle_db.update_param(new_root_id).unwrap();
 
     // for dbg only
-    println!("dbg: real new root id: {:?}", new_root_id.unwrap());
+    // println!("dbg: real new root id: {:?}", new_root_id.unwrap());
     let new_root_hash = merkle_db.get_node(&new_root_id.unwrap().to_digest()).unwrap().unwrap().get_hash();
-    println!("dbg: real new root hash: {:?}", new_root_hash);
+    // println!("dbg: real new root hash: {:?}", new_root_hash);
 
     merkle_db.close();
 
+    let time = timer.elapsed().real.as_micros() / 1000;
+    println!("merkle db maintain time: {} ms", time);
+
     0
 }
+
+

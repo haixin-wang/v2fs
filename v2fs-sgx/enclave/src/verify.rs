@@ -2,12 +2,12 @@ use anyhow::Result;
 use sgx_types::sgx_status_t;
 use vfs_common::page::PageId;
 use vfs_common::digest::{Digest, DIGEST_LEN, Digestible};
-use vfs_common::SGX_VFS;
+use vfs_common::{SGX_VFS, PAGE_SIZE, UPDATE_OPT_LEVEL};
 use merkle_tree::{storage::{MerkleNode, NodeId}, proof::Proof, hash::{leaf_hash, nonleaf_hash}};
 use hashbrown::{HashMap, HashSet};
 use alloc::{vec::Vec, collections::vec_deque::VecDeque};
 use crate::vfs::server_vfs::{server_vfs_state, CachePage};
-
+use sgx_tstd::io::{Cursor, SeekFrom, Seek, Write};
 
 extern "C" {
     fn ocall_get_read_proof_len(
@@ -23,6 +23,15 @@ extern "C" {
         len: usize, 
         proof_ptr: *mut u8, 
         proof_len: usize
+    ) -> sgx_status_t; 
+
+    fn ocall_read_pages_with_len(
+        retval: *mut i32, 
+        ptr: *const u8, 
+        len: usize, 
+        pages_ptr: *mut u8, 
+        predicated_p_len: usize,
+        real_p_len: *mut usize,
     ) -> sgx_status_t; 
 
     fn ocall_get_read_proof_with_len(
@@ -48,12 +57,29 @@ extern "C" {
         len: usize
     ) -> sgx_status_t;
 
+    fn ocall_get_nodes_with_len(
+        retval: *mut i32,
+        ids_ptr: *const u8, 
+        len: usize,
+        nodes_ptr: *mut u8,
+        predicated_p_len: usize,
+        real_len: *mut usize,
+    ) -> sgx_status_t;
+
     fn ocall_update_merkle_db(
         retval: *mut i32,
         ptr: *const u8, 
         len: usize,
     ) -> sgx_status_t;
+
+    fn ocall_write_pages(
+        retval: *mut i32,
+        ptr: *const u8, 
+        len: usize,
+    ) -> sgx_status_t;
 }
+
+const NODE_OPT_TUPLE_LEN: usize = 42;
 
 pub(crate) fn verify_then_update() -> Result<()> {
     let (read_map, write_map) = 
@@ -74,7 +100,14 @@ pub(crate) fn verify_then_update() -> Result<()> {
         }
     }
     
-    verify_write_map_base(write_map, root_id).unwrap();
+    if UPDATE_OPT_LEVEL == 2 {
+        verify_write_map_batch(read_map, write_map, root_id).unwrap();
+    } else {
+        verify_write_map_base(write_map, root_id).unwrap();
+    }
+    
+    read_map.clear();
+    write_map.clear();
     println!("Verification succeeds.");
     Ok(())
 }
@@ -99,6 +132,109 @@ fn get_origin_root() -> Result<(Option<NodeId>, Digest)> {
     Ok(postcard::from_bytes::<(Option<NodeId>, Digest)>(&info_buf[..]).unwrap())
 }
 
+fn verify_write_map_batch(
+    read_map: &mut HashMap<PageId, CachePage>, 
+    write_map: &mut HashMap<PageId, CachePage>, 
+    old_root_id: Option<NodeId>
+) -> Result<()> {
+    let mut bg_complete_pages = HashMap::<PageId, Vec<u8>>::new();
+    let mut p_ids_need_read = vec![];
+
+    for (p_id, w_cache_p) in write_map.iter() {
+        if w_cache_p.get_len() != PAGE_SIZE {
+            if let Some(r_cache_p) = read_map.remove(p_id) {
+                bg_complete_pages.insert(*p_id, r_cache_p.to_bytes());
+            } else {
+                p_ids_need_read.push(*p_id);
+            }
+        }
+    }
+
+    let mut retval: i32 = 0;
+
+    if p_ids_need_read.len() != 0 {
+        let bytes = match postcard::to_allocvec(&p_ids_need_read) {
+            Ok(buf) => buf,
+            Err(_) => {
+                bail!("postcard serialize for Vec<PageId> failed");
+            }
+        };
+        let mut real_len = 0;
+        let predicated_len = 4103 * p_ids_need_read.len();
+        let mut pages_buf = vec![0_u8; predicated_len];
+
+        let sgx_ret = unsafe {
+            ocall_read_pages_with_len(&mut retval as *mut _, bytes.as_ptr(), bytes.len(), pages_buf.as_mut_ptr() as *mut _, predicated_len, &mut real_len as *mut usize)
+        };
+
+        if sgx_ret != sgx_status_t::SGX_SUCCESS {
+            bail!("sgx_err happened in ocall_read_pages_with_len: {:?}", sgx_ret);
+        }
+        let pages_info = postcard::from_bytes::<Vec<(PageId, Vec<u8>)>>(&pages_buf[..real_len]).unwrap();
+
+        for (p_id, bytes) in pages_info {
+            bg_complete_pages.insert(p_id, bytes);
+        }
+    }
+    
+    let mut pages_to_write = vec![];
+    let mut modif_hashes = Vec::new();
+    for (p_id, w_cache_p) in write_map.drain() {
+        let len =  w_cache_p.get_len();
+        if len != PAGE_SIZE {
+            let bg_bytes = bg_complete_pages.remove(&p_id).expect("the page should have been stored in complete_pages");
+            let ofst = w_cache_p.get_offset();
+            let w_slice = &w_cache_p.get_bytes()[ofst..(ofst+len)];
+            let mut cursor = Cursor::new(bg_bytes);
+            match cursor.seek(SeekFrom::Start(ofst as u64)) {
+                Ok(o) => {
+                    if o != ofst as u64 {
+                        println!("seek position not correct");
+                    }
+                }
+                Err(_) => {
+                    println!("seek err happened in seeking cursor");
+                }
+            }
+            if let Err(_err) = cursor.write_all(w_slice) {
+                println!("write err");
+            }
+
+            let bytes = cursor.into_inner();
+            modif_hashes.push((p_id, bytes.to_digest()));
+            pages_to_write.push((p_id, bytes));
+        } else {
+            modif_hashes.push((p_id, w_cache_p.get_bytes().to_digest()));
+            pages_to_write.push((p_id, w_cache_p.to_bytes()));
+        }
+    }
+
+    // write pages_to_write by ocall
+    let bytes = match postcard::to_allocvec(&pages_to_write) {
+        Ok(buf) => buf,
+        Err(_) => {
+            bail!("postcard serialize for Vec<(PageId, Vec<u8>)> failed");
+        }
+    };
+    let sgx_ret = unsafe {
+        ocall_write_pages(&mut retval as *mut _, bytes.as_ptr(), bytes.len())
+    };
+    if sgx_ret != sgx_status_t::SGX_SUCCESS {
+        bail!("sgx_err happened in writing pages");
+    }
+
+    modif_hashes.sort_by(|(p1, _), (p2, _)| p1.cmp(p2));
+    let mut proof = HashMap::<NodeId, Digest>::new();
+    let mut height = 0;
+    if let Some(r_id) = old_root_id {
+        verify_read_batch(&mut proof, &modif_hashes, r_id)?;
+        height = r_id.get_height();
+    }
+    cal_new_root(&modif_hashes, &mut proof, height)?;
+
+    Ok(())
+}
+
 fn verify_write_map_base(
     write_map: &mut HashMap<PageId, CachePage>, 
     old_root_id: Option<NodeId>
@@ -111,15 +247,15 @@ fn verify_write_map_base(
     let mut proof = HashMap::<NodeId, Digest>::new();
     let mut height = 0;
     if let Some(r_id) = old_root_id {
-        verify_read(&mut proof, &modif_hashes, r_id)?;
+        verify_read_base(&mut proof, &modif_hashes, r_id)?;
         height = r_id.get_height();
     }
 
     cal_new_root(&modif_hashes, &mut proof, height)?;
 
-    // whether verify write map is an optimization
-    // update_merkle_db(&modif_hashes)?;
-
+    if UPDATE_OPT_LEVEL == 0 {
+        update_merkle_db(&modif_hashes)?;
+    }
     Ok(())
 }
 
@@ -140,7 +276,98 @@ fn update_merkle_db(modif_hashes: &Vec<(PageId, Digest)>) -> Result<()> {
     Ok(())
 }
 
-fn verify_read(
+
+fn verify_read_batch(
+    proof: &mut HashMap<NodeId, Digest>,
+    modif: &Vec<(PageId, Digest)>,
+    r_id: NodeId,
+) -> Result<()> {
+    let mut visited = HashSet::<NodeId>::new();
+    let mut queue = VecDeque::<NodeId>::new();
+    let mut ids_to_read = vec![];
+
+    for (p_id, _) in modif {
+        queue.push_back(NodeId::from_page_id(*p_id));
+    }
+    let mut cur_id;
+    while let Some(n_id) = queue.pop_front() {
+        cur_id = n_id;
+        visited.insert(cur_id);
+
+        let sib_id = cur_id.get_sib_id();
+        ids_to_read.push(cur_id);
+        ids_to_read.push(sib_id);
+
+        let parent_id = cur_id.get_parent_id();
+        if !queue.contains(&parent_id) {
+            queue.push_back(parent_id);
+        }
+
+        if cur_id.get_height() == r_id.get_height() {
+            break;
+        }
+    }
+
+    // get all Option<Node> via ocall and insert into proof
+    let nodes_len = NODE_OPT_TUPLE_LEN * ids_to_read.len();
+    let mut retval: i32 = 0;
+
+    if nodes_len != 0 {
+        let mut nodes_buf = vec![0 as u8; nodes_len];
+        let mut real_len = 0;
+
+        let bytes = match postcard::to_allocvec(&ids_to_read) {
+            Ok(buf) => buf,
+            Err(e) => {
+                anyhow::bail!("failed to cast node id to bytes, reason: {:?}", e);
+            }
+        };
+
+        let sgx_ret = unsafe {
+            ocall_get_nodes_with_len(&mut retval as *mut _, bytes.as_ptr(), bytes.len(), nodes_buf.as_mut_ptr() as *mut _, nodes_len, &mut real_len as *mut usize)
+        };
+        if sgx_ret != sgx_status_t::SGX_SUCCESS {
+            bail!("sgx_err happened in ocall_get_nodes_with_len: {:?}", sgx_ret);
+        }
+        let nodes = postcard::from_bytes::<Vec<(NodeId, Option<MerkleNode>)>>(&nodes_buf[..real_len]).unwrap();
+        for (p_id, node) in nodes {
+            if let Some(n) = node {
+                proof.insert(p_id, n.get_hash());
+            }
+        }
+    }
+    
+
+    queue.clear();
+    for (p_id, _) in modif {
+        queue.push_back(NodeId::from_page_id(*p_id));
+    }
+    let mut cur_id;
+    while let Some(n_id) = queue.pop_front() {
+        cur_id = n_id;
+        if !cur_id.is_leaf() {
+            if let Some(cur_hash) = proof.get(&cur_id) {
+                let (l_id, r_id) = cur_id.get_children()?;
+                let l_hash = proof.get(&l_id);
+                let r_hash = proof.get(&r_id);
+                if *cur_hash != nonleaf_hash(l_hash.copied(), r_hash.copied()) {
+                    bail!("verification failed at node {:?}", cur_id);
+                }
+            }
+        }
+        if cur_id.get_height() == r_id.get_height() {
+            break;
+        }
+    }
+    for n_id in visited.drain() {
+        proof.remove(&n_id);
+    }
+
+    Ok(())
+}
+
+// opt: try to calculate all needed node id first, use one ocall to get all, then insert into proof
+fn verify_read_base(
     proof: &mut HashMap<NodeId, Digest>,
     modif: &Vec<(PageId, Digest)>,
     r_id: NodeId,
@@ -164,7 +391,7 @@ fn verify_read(
             }
         };
         let mut retval: i32 = 0;
-        let node_len = node_len()?;
+        let node_len = NODE_OPT_TUPLE_LEN;
         let mut node_buf = vec![0 as u8; node_len];
         let sgx_ret = unsafe {
             ocall_get_node(&mut retval as *mut _, cur_bytes.as_ptr(), cur_bytes.len(), node_buf.as_mut_ptr() as *mut _, node_len)
@@ -268,32 +495,22 @@ fn cal_new_root(
 
     // sign root_hash and id then publish it
     // for dbg only
-    println!("dbg: sgx computed new root id: {:?}", root_id);
-    println!("dbg: sgx computed new root hash: {:?}", root_hash);
+    println!("sgx computed new root id: {:?}", root_id);
+    println!("sgx computed new root hash: {:?}", root_hash);
     
     Ok(())
 }
 
-fn node_len() -> Result<usize> {
-    let n = Some(MerkleNode::new(Digest::default()));
-    let bytes = match postcard::to_allocvec(&n) {
-        Ok(buf) => buf,
-        Err(e) => {
-            bail!("failed to cast node to bytes, reason: {:?}", e);
-        }
-    };
-    Ok(bytes.len())
-}
 
 
 fn verify_read_map(
-    read_map: &mut HashMap<PageId, CachePage>, 
+    read_map: &HashMap<PageId, CachePage>, 
     old_root_hash: Digest, 
     old_r_id: NodeId
 ) -> Result<()> {
     let mut p_ids_to_verify = vec![];
     let mut p_hashes = vec![];
-    for (p_id, cache_p) in read_map.drain() {
+    for (p_id, cache_p) in read_map {
         p_ids_to_verify.push(p_id);
         p_hashes.push((p_id, cache_p.to_digest()));
     }
@@ -306,7 +523,6 @@ fn verify_read_map(
     };
 
     let predicated_p_len = predicate_proof_len(p_ids_to_verify.len(), old_r_id);
-    println!("dbg: predicated proof len: {}", predicated_p_len);
 
     let mut retval: i32 = 0;
     let mut proof_buf = vec![0 as u8; predicated_p_len];
@@ -326,7 +542,7 @@ fn verify_read_map(
 
     for (p_id, dig) in p_hashes {
         let leaf_hash = leaf_hash(&p_id, &dig);
-        proof.verify_val(leaf_hash, p_id, old_r_id.get_height())?;
+        proof.verify_val(leaf_hash, *p_id, old_r_id.get_height())?;
     }
 
     Ok(())

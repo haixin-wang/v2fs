@@ -49,6 +49,10 @@ impl CachePage {
         self.bytes.clone()
     }
 
+    pub fn to_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
     pub fn get_offset(&self) -> usize {
         self.offset
     }

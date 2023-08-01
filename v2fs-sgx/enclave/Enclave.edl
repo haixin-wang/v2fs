@@ -24,8 +24,11 @@ enclave {
         int32_t ocall_get_read_proof_len([in, size=len] const uint8_t* ptr, size_t len, [out] size_t* p_len);
         int32_t ocall_get_read_proof_with_len([in, size=len] const uint8_t* ptr, size_t len, [out, size=predicated_p_len] uint8_t* proof_ptr, size_t predicated_p_len, [out] size_t* real_p_len);
         int32_t ocall_get_read_proof([in, size=len] const uint8_t* ptr, size_t len, [out, size=p_len] uint8_t* proof_ptr, size_t p_len);
+        int32_t ocall_read_pages_with_len([in, size=len] const uint8_t* ptr, size_t len, [out, size=predicated_p_len] uint8_t* pages_ptr, size_t predicated_p_len, [out] size_t* real_p_len);
         int32_t ocall_get_merkle_root([out, size=len] uint8_t* ptr, size_t len);
         int32_t ocall_get_node([in, size=id_len] const uint8_t* id_ptr, size_t id_len, [out, size=len] uint8_t* ptr, size_t len);
+        int32_t ocall_get_nodes_with_len([in, size=len] const uint8_t* ids_ptr, size_t len, [out, size=predicated_len] uint8_t* nodes_ptr, size_t predicated_len, [out] size_t* real_len);
         int32_t ocall_update_merkle_db([in, size=len] const uint8_t* ptr, size_t len);
+        int32_t ocall_write_pages([in, size=len] const uint8_t* ptr, size_t len);
     };
 };

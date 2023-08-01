@@ -64,7 +64,7 @@ fn execute_sql(stmts: &Vec<String>) -> Result<()> {
     let bytes = match postcard::to_allocvec(&stmts) {
         Ok(buf) => buf,
         Err(_) => {
-            bail!("postcard serialize for Vec<PageId> failed");
+            bail!("postcard serialize for Vec<String> failed");
         }
     };
 
