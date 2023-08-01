@@ -6,7 +6,7 @@ The project needs SGX-enabled CPU for execution. If you do not have one, you may
 * Update the following lines to the corresponding paths on your machine:
 * * `line 1` of `./Makefile`
 * * `line 21` of `./app/src/lib.rs`
-* * `line 53` of `./libsqlite3-sys/build.rs`
+* * `line 53-55` of `./libsqlite3-sys/build.rs`
 * Put your commands inside a .txt file seperated by `\n`, or you can use our provided test queries at `./cmds/test_wkld.txt`, which contains commands to create a test table and insert some records.
 * Run `make clean`, then `make`.
 * Run `./target/release/app_executor`. The SQLite database and Merkle tree will be generated to MAIN_PATH and MERKLE_PATH, respectively.
