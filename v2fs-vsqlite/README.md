@@ -13,10 +13,10 @@
 ### Option 1: using the default database and MHT
 * We provide a test database and MHT at `./db/sqlite_db/test.db` and `./db/merkle_db/merkle_test`, which contains the tables in TPC-H benchmark with a small scale factor. You can directly use them for query processing without any other setting.
 
-#### Option 2: simulate the MHT building
+### Option 2: simulate the MHT building
 * If you want to use your own SQLite database, update MAIN_PATH and MERKLE_PATH as your target database and then run `./target/release/build_ads`.
 
-#### Option 3: using SGX to securely build MHT
+### Option 3: using SGX to securely build MHT
 * If you have SGX-enabled CPU, you can use v2fs_sgx project to build the MHT securely.
 
 
