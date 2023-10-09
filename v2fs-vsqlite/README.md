@@ -35,6 +35,6 @@ For example:
 ./target/release/client -c 500 -o 3 -w ./query/test_wkld.txt -m 10000 -h 5
 ```
 
-Run `./target/release/query --help` for more information.
+Run `./target/release/client --help` for more information.
 
 
