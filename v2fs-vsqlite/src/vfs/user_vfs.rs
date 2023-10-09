@@ -1,10 +1,11 @@
 use crate::{
     cache::Cache,
     digest::Digest,
+    simple_vcache::SVCache,
     vbf::VersionBloomFilter,
     version_cache::VCache,
     vfs::{NAME_CNT, REMOTE_FLAG, TMP_FLAG},
-    PageId, Type, UserVfs, simple_vcache::SVCache,
+    PageId, Type, UserVfs,
 };
 use anyhow::{bail, Context, Result};
 use libsqlite3_sys as ffi;

@@ -2,17 +2,17 @@
 extern crate tracing;
 
 use anyhow::{bail, Result};
-use v2fs_vsqlite::simple_vcache::SVCache;
 use std::collections::{HashMap, VecDeque};
 use std::net::TcpStream;
 use structopt::StructOpt;
 use v2fs_vsqlite::digest::Digest;
 use v2fs_vsqlite::query::{query, update_user_bf};
 use v2fs_vsqlite::script::load_query_wkld;
+use v2fs_vsqlite::simple_vcache::SVCache;
 use v2fs_vsqlite::utils::{cal_cap, default_connect, register_vfs};
 use v2fs_vsqlite::utils::{init_tracing_subscriber, ResInfo, Time};
-use v2fs_vsqlite::{Type, PageId};
 use v2fs_vsqlite::{cache::Cache, version_cache::VCache};
+use v2fs_vsqlite::{PageId, Type};
 
 #[derive(StructOpt, Debug)]
 struct Opt {
@@ -52,13 +52,7 @@ pub fn main() -> Result<()> {
         _ => bail!("Invalid opt_level"),
     };
 
-    exp(
-        cache_cap,
-        tp,
-        workload_path,
-        map_size,
-        hash_num,
-    )?;
+    exp(cache_cap, tp, workload_path, map_size, hash_num)?;
 
     Ok(())
 }
@@ -100,9 +94,7 @@ pub fn exp(
     )?;
 
     Ok(())
-
 }
-
 
 #[allow(clippy::too_many_arguments)]
 fn exec_wkld(
@@ -119,17 +111,21 @@ fn exec_wkld(
         info!("Processing query: {}...", i);
         map.clear();
         match tp {
-            Type::None => {},
-            Type::Intra => {cache.clear();},
-            Type::Both => {cache.unconfirm();},
+            Type::None => {}
+            Type::Intra => {
+                cache.clear();
+            }
+            Type::Both => {
+                cache.unconfirm();
+            }
             Type::BothBloom => {
                 vcache.unconfirm();
                 update_user_bf()?;
-            },
+            }
             Type::SimpleBloom => {
                 svcache.unconfirm();
                 update_user_bf()?;
-            },
+            }
         }
 
         // if opt_level == 4 {
@@ -175,12 +171,10 @@ fn exec_wkld(
     let mut p_s_in_kb = total_p_s as f64 / 1024.0;
     p_s_in_kb /= size as f64;
 
-
     info!(
         "average q_t: {}s, v_t: {}s, total_t: {}s, p_s: {}KB",
         q_t_in_s, v_t_in_s, total_t_in_s, p_s_in_kb
     );
-
 
     Ok(())
 }

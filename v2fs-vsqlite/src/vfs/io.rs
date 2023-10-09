@@ -2,13 +2,14 @@ use crate::{
     cache::{leaf::CacheLeafNode, Cache, CacheNode},
     digest::{Digest, Digestible},
     merkle_cb_tree::{write::WriteContext, NodeId, WriteInterface},
+    simple_vcache::{SVCache, SVCacheNode},
     vbf::VersionBloomFilter,
     version_cache::{VCache, VCacheNode},
     vfs::{
         server_vfs::ServerFileState, user_vfs::UserFileState, GLOBAL_TS, MERKLE_PATH, QUERY,
         REMOTE_FLAG, TMP_FILE_PATH, TMP_FLAG, YES_FLAG,
     },
-    MerkleDB, PageId, simple_vcache::{SVCache, SVCacheNode},
+    MerkleDB, PageId,
 };
 use anyhow::{bail, Context, Result};
 use libsqlite3_sys as ffi;
@@ -178,8 +179,7 @@ pub unsafe extern "C" fn u_read(
                 let svcache = &mut file_state.svcache;
                 let vbf = &file_state.vbf;
                 process_simply_bloom(svcache, stream, p_ids, &mut pages, map, vbf);
-
-            },
+            }
         }
 
         pages.sort();
@@ -428,12 +428,12 @@ fn process_both_bloom(
 }
 
 fn process_simply_bloom(
-    svcache: &mut SVCache, 
-    stream: &mut TcpStream, 
+    svcache: &mut SVCache,
+    stream: &mut TcpStream,
     p_ids: Vec<PageId>,
     pages: &mut Vec<Page>,
     map: &mut HashMap<PageId, Digest>,
-    vbf: &VersionBloomFilter
+    vbf: &VersionBloomFilter,
 ) {
     for p_id in p_ids {
         let key = pid_to_key(p_id);
@@ -525,7 +525,6 @@ fn process_simply_bloom(
 
                                 let page = Page::new(p_id, bytes_ptr.clone());
                                 pages.push(page);
-
                             } else {
                                 let _w_amt = stream
                                     .write(&YES_FLAG.to_le_bytes())
@@ -545,7 +544,7 @@ fn process_simply_bloom(
                                     svcache.insert(p_id, bytes_ptr, cur_v);
                                 }
                             }
-                        },
+                        }
                         SVCacheNode::NonLeaf(_) => {
                             panic!("Impossible be a non-leaf node when confirm page")
                         }

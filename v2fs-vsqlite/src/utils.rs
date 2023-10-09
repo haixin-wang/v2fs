@@ -14,13 +14,14 @@ use crate::{
     cache::Cache,
     digest::{Digest, Digestible},
     merkle_cb_tree::ReadInterface,
+    simple_vcache::SVCache,
     vbf::VersionBloomFilter,
     version_cache::VCache,
     vfs::{
         server_vfs::register_server, user_vfs::register_user, DEFAULT, END, MERKLE_PATH, NO_FLAG,
         SERVER_VFS, USER_VFS, YES_FLAG,
     },
-    MerkleDB, PageId, Parameter, ServerVfs, Type, UserVfs, simple_vcache::SVCache,
+    MerkleDB, PageId, Parameter, ServerVfs, Type, UserVfs,
 };
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -49,12 +50,7 @@ pub struct ResInfo {
 }
 
 impl ResInfo {
-    pub fn new(
-        query_t: Time,
-        verify_t: Time,
-        proof_s: usize,
-        cache_size: u32,
-    ) -> Self {
+    pub fn new(query_t: Time, verify_t: Time, proof_s: usize, cache_size: u32) -> Self {
         Self {
             query_t,
             verify_t,

@@ -47,28 +47,37 @@ fn handle_both_cache(
     mut ctx: ReadContext<MerkleDB>,
     merkle_db: &MerkleDB,
 ) -> Result<()> {
-    let mut queried_page_ids = HashSet::new();
+    let mut pids = HashSet::new();
 
     loop {
         let mut buff = [0; PAGE_SIZE as usize];
         let _bytes_read = stream.read(&mut buff)?;
         let (flag, p_id, digs) = bincode::deserialize::<(u32, PageId, Vec<Digest>)>(&buff)?;
         if flag == END {
-            trace!("end flag received");
+            debug!("end flag received");
             // query finished, generate proof
-            let p1 = ctx.into_proof();
-
-            let bytes = bincode::serialize(&p1)?;
-            let _w_amt = stream.write(&bytes)?;
-
+            for p_id in pids {
+                ctx.query(p_id)?;
+            }
+            let p = ctx.into_proof();
+            let bytes = bincode::serialize(&p)?;
+            let bytes_len = bytes.len();
+            let _w_amt = stream.write(&bytes_len.to_le_bytes())?;
+            let mut buf = [0; PAGE_SIZE as usize];
+            let _bytes_read = stream.read(&mut buf)?;
+            let flag = bincode::deserialize::<u32>(&buf)?;
+            if flag == YES_FLAG {
+                let _w_amt = stream.write(&bytes)?;
+            } else {
+                bail!("invalid signal for proof transmission");
+            }
             break;
         } else if flag == CONFIRM {
-            trace!("confirm flag received, the id is {}", p_id);
+            debug!("confirm flag received, the id is {}", p_id);
             let (match_flag, pos) = confirm(p_id, &digs, merkle_db)?;
 
             if match_flag {
-                // if match, return YES_FLAG, then (h, w)
-                trace!("match, return YES_FLAG, then (h, w)");
+                debug!("match, return YES_FLAG, then (h, w)");
 
                 let _w_amt = stream.write(&YES_FLAG.to_le_bytes())?;
                 let mut buff = [0; PAGE_SIZE as usize];
@@ -78,36 +87,26 @@ fn handle_both_cache(
                 let transfer_data = pos;
                 let bytes = bincode::serialize(&transfer_data).expect("failed to serialize");
                 let _w_amt = stream.write(&bytes)?;
-
-                if !queried_page_ids.contains(&p_id) {
-                    ctx.query(p_id)?;
-                }
-                queried_page_ids.insert(p_id);
-                
+                pids.insert(p_id);
             } else {
-                // if not match, return NO_FLAG, then bytes
-                trace!("not match, return NO_FLAG, then bytes");
+                debug!("not match, return NO_FLAG, then bytes");
                 let _w_amt = stream.write(&NO_FLAG.to_le_bytes())?;
                 let mut buff = [0; PAGE_SIZE as usize];
                 let _bytes_read = stream.read(&mut buff)?;
                 let _receipt = bincode::deserialize::<u32>(&buff)?;
                 let bytes = query_page(p_id);
-                if !queried_page_ids.contains(&p_id) {
-                    ctx.query(p_id)?;
-                }
-                queried_page_ids.insert(p_id);
+                pids.insert(p_id);
                 let _w_amt = stream.write(&bytes)?;
             }
         } else if flag == QUERY {
-            trace!("query flag received, the id is {}", p_id);
-            ctx.query(p_id)?;
-            queried_page_ids.insert(p_id);
+            debug!("query flag received, the id is {}", p_id);
+            pids.insert(p_id);
             let p_cont = query_page(p_id);
             let _w_amt = stream.write(&p_cont)?;
         } else {
-            trace!("invalid signal received: {}, {}, {:?}", flag, p_id, digs);
+            debug!("invalid signal received: {}, {}, {:?}", flag, p_id, digs);
             bail!("Invalid signal.");
-        }  
+        }
     }
 
     Ok(())
@@ -134,26 +133,38 @@ fn confirm(p_id: PageId, digs: &Vec<Digest>, merkle_db: &MerkleDB) -> Result<(bo
 }
 
 fn handle_no_cache(stream: &mut TcpStream, mut ctx: ReadContext<MerkleDB>) -> Result<()> {
-    trace!("handle no cache");
+    debug!("handle no cache");
+    let mut pids = HashSet::<PageId>::new();
     loop {
         let mut buff = [0; PAGE_SIZE as usize];
         let _bytes_read = stream.read(&mut buff)?;
         let (flag, p_id, digs) = bincode::deserialize::<(u32, PageId, Vec<Digest>)>(&buff)?;
-        trace!("received flag: {}, p_id: {}, digs: {:?}", flag, p_id, digs);
+        debug!("received flag: {}, p_id: {}, digs: {:?}", flag, p_id, digs);
         if flag == END {
-            trace!("query finished, generate proof");
-            // query finished, generate proof
+            debug!("query finished, generate proof");
+            for p_id in pids {
+                ctx.query(p_id)?;
+            }
             let p = ctx.into_proof();
             let bytes = bincode::serialize(&p)?;
-            let _w_amt = stream.write(&bytes)?;
+            let bytes_len = bytes.len();
+            let _w_amt = stream.write(&bytes_len.to_le_bytes())?;
+            let mut buf = [0; PAGE_SIZE as usize];
+            let _bytes_read = stream.read(&mut buf)?;
+            let flag = bincode::deserialize::<u32>(&buf)?;
+            if flag == YES_FLAG {
+                let _w_amt = stream.write(&bytes)?;
+            } else {
+                bail!("invalid signal for proof transmission");
+            }
             break;
         } else if flag == QUERY {
-            trace!("query page {}...", p_id);
-            // query page         
-            ctx.query(p_id)?;
+            debug!("query page {}...", p_id);
+            // query page
+            pids.insert(p_id);
             let p_cont = query_page(p_id);
             let _w_amt = stream.write(&p_cont)?;
-            trace!("page bytes has been sent to user");
+            debug!("page bytes has been sent to user");
         } else {
             bail!("Invalid signal");
         }

@@ -65,7 +65,6 @@ fn build_tree() -> TestTree {
     merkle_tree
 }
 
-
 // #[test]
 // fn test_insert() -> Result<()> {
 //     init_tracing_subscriber("info")?;
@@ -147,7 +146,6 @@ fn build_tree() -> TestTree {
 
 //     Ok(())
 // }
-
 
 // #[test]
 // fn test_update() -> Result<()> {
@@ -337,7 +335,6 @@ fn test_read() -> Result<()> {
 
     Ok(())
 }
-
 
 #[test]
 fn test_sha256() {

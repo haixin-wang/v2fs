@@ -2,12 +2,16 @@ pub mod hash;
 pub mod leaf;
 pub mod non_leaf;
 
-
 use lru::LruCache;
 
-use crate::{merkle_cb_tree::NodeId, digest::{Digestible, Digest}, PageId, vfs::PAGE_SIZE};
+use crate::{
+    digest::{Digest, Digestible},
+    merkle_cb_tree::NodeId,
+    vfs::PAGE_SIZE,
+    PageId,
+};
 
-use self::{leaf::SVCacheLeafNode, non_leaf::SVCacheNonLeafNode, hash::merge_hash};
+use self::{hash::merge_hash, leaf::SVCacheLeafNode, non_leaf::SVCacheNonLeafNode};
 
 #[derive(Clone)]
 pub(crate) enum SVCacheNode {
@@ -36,7 +40,6 @@ impl SVCacheNode {
             SVCacheNode::NonLeaf(n) => n.get_id(),
         }
     }
-
 }
 
 impl Digestible for SVCacheNode {
@@ -142,15 +145,17 @@ impl SVCache {
         for id in covered_ids {
             if let Some(n) = self.get_node_mut(&id.to_digest()) {
                 match n {
-                    SVCacheNode::Leaf(l) => {l.validate_with_version(version);},
-                    SVCacheNode::NonLeaf(non) => {non.validate();},
+                    SVCacheNode::Leaf(l) => {
+                        l.validate_with_version(version);
+                    }
+                    SVCacheNode::NonLeaf(non) => {
+                        non.validate();
+                    }
                 }
-                
             } else {
                 warn!("Cannot find a node during cache confirming");
             }
         }
-
     }
 
     pub fn cache_size_and_height(&self) -> (u32, u32) {
@@ -221,5 +226,4 @@ impl SVCache {
             self.push_node(parent_id, SVCacheNode::NonLeaf(parent));
         }
     }
-
 }

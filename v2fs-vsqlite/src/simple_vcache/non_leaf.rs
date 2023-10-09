@@ -1,6 +1,7 @@
-use crate::{digest::{Digest, Digestible}, merkle_cb_tree::NodeId};
-
-
+use crate::{
+    digest::{Digest, Digestible},
+    merkle_cb_tree::NodeId,
+};
 
 #[derive(Clone)]
 pub(crate) struct SVCacheNonLeafNode {
@@ -8,7 +9,6 @@ pub(crate) struct SVCacheNonLeafNode {
     hash: Digest,
     is_valid: bool,
 }
-
 
 impl SVCacheNonLeafNode {
     pub(crate) fn new(id: NodeId, hash: Digest) -> Self {

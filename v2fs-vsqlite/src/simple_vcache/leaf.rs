@@ -1,8 +1,11 @@
-use crate::{vfs::PAGE_SIZE, merkle_cb_tree::NodeId, PageId, digest::{Digestible, Digest}};
+use crate::{
+    digest::{Digest, Digestible},
+    merkle_cb_tree::NodeId,
+    vfs::PAGE_SIZE,
+    PageId,
+};
 
 use super::hash::leaf_hash;
-
-
 
 #[derive(Clone)]
 pub(crate) struct SVCacheLeafNode {
@@ -12,13 +15,8 @@ pub(crate) struct SVCacheLeafNode {
     is_valid: bool,
 }
 
-
 impl SVCacheLeafNode {
-    pub(crate) fn new(
-        p_id: PageId,
-        bytes: Box<[u8; PAGE_SIZE as usize]>,
-        version: u32,
-    ) -> Self {
+    pub(crate) fn new(p_id: PageId, bytes: Box<[u8; PAGE_SIZE as usize]>, version: u32) -> Self {
         Self {
             id: NodeId::new(0, p_id.get_id()),
             bytes,
@@ -56,7 +54,6 @@ impl SVCacheLeafNode {
         self.version = version;
     }
 }
-
 
 impl Digestible for SVCacheLeafNode {
     fn to_digest(&self) -> Digest {

@@ -1,6 +1,11 @@
 use anyhow::Result;
 use rusqlite::{Connection, OpenFlags};
-use std::{ffi::CString, io::Read, mem::ManuallyDrop, net::TcpStream};
+use std::{
+    ffi::CString,
+    io::{Read, Write},
+    mem::ManuallyDrop,
+    net::TcpStream,
+};
 
 use crate::{
     merkle_cb_tree::proof::Proof,
@@ -10,13 +15,15 @@ use crate::{
         server_vfs::{server_vfs_state, update_merkle_db},
         user_vfs::user_vfs_state,
         BOTH_CACHE, HOLDER_FILE_PATH, MAIN_PATH, NO_CACHE, PAGE_SIZE, SERVER_VFS, USER_VFS,
-    }, Type,
+        YES_FLAG,
+    },
+    Type,
 };
 
 pub fn query(sql: &str, tp: Type, stream: &mut TcpStream) -> Result<ResInfo> {
     let signal = match tp {
-        Type::None | Type::Intra => {NO_CACHE},
-        Type::Both | Type::BothBloom | Type::SimpleBloom => {BOTH_CACHE},
+        Type::None | Type::Intra => NO_CACHE,
+        Type::Both | Type::BothBloom | Type::SimpleBloom => BOTH_CACHE,
     };
 
     // let signal = if opt_level == 2 || opt_level == 3 {
@@ -28,7 +35,7 @@ pub fn query(sql: &str, tp: Type, stream: &mut TcpStream) -> Result<ResInfo> {
     let timer1 = howlong::ProcessCPUTimer::new();
     hand_shake(stream, signal)?;
     query_from_vfs(sql, stream)?;
-    let buf = receive_data(stream);
+    let buf = receive_proof(stream);
     let proof = bincode::deserialize::<Proof>(&buf)?;
     let q_time = Time::from(timer1.elapsed());
     info!("query time: {}ms", q_time.real / 1000);
@@ -47,17 +54,17 @@ pub fn query(sql: &str, tp: Type, stream: &mut TcpStream) -> Result<ResInfo> {
                 let cache = &u_vfs.cache;
                 let (cache_size, cache_height) = cache.cache_size_and_height();
                 (cache_size, cache_height, &u_vfs.map)
-            },
+            }
             Type::BothBloom => {
                 let vcache = &u_vfs.vcache;
                 let (cache_size, cache_height) = vcache.cache_size_and_height();
                 (cache_size, cache_height, &u_vfs.map)
-            },
+            }
             Type::SimpleBloom => {
                 let svcache = &u_vfs.svcache;
                 let (cache_size, cache_height) = svcache.cache_size_and_height();
                 (cache_size, cache_height, &u_vfs.map)
-            },
+            }
         }
         // match opt_level {
         //     4 => {
@@ -112,17 +119,24 @@ fn query_from_vfs(sql: &str, stream: &mut TcpStream) -> Result<()> {
     Ok(())
 }
 
-fn receive_data(stream: &mut TcpStream) -> Vec<u8> {
-    let mut buf = Vec::<u8>::new();
-    loop {
-        let mut buffer = vec![0; PAGE_SIZE as usize];
-        let n = stream.read(&mut buffer).unwrap_or(0);
-        buf.append(&mut buffer.to_vec());
-        if n < PAGE_SIZE as usize {
-            break;
-        }
-    }
-    buf
+fn receive_proof(stream: &mut TcpStream) -> Vec<u8> {
+    // Read the vector size from the client
+    let mut buffer = [0; PAGE_SIZE as usize];
+    let _bytes_read = stream.read(&mut buffer).expect("failed to read stream");
+    let vector_size = bincode::deserialize::<u32>(&buffer).expect("failed to deserialize bincode");
+
+    // Write response
+    let _w_amt = stream
+        .write(&YES_FLAG.to_le_bytes())
+        .expect("failed to write");
+
+    // Read the vector data from the client
+    let mut vector = vec![0u8; vector_size as usize];
+    stream
+        .read_exact(&mut vector)
+        .expect("Failed to read vector data");
+
+    vector
 }
 
 pub fn update_db(sql: &str) -> Result<()> {

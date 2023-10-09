@@ -8,11 +8,11 @@ pub mod digest;
 pub mod merkle_cb_tree;
 pub mod query;
 pub mod script;
+pub mod simple_vcache;
 pub mod utils;
 pub mod vbf;
 pub mod verify;
 pub mod version_cache;
-pub mod simple_vcache;
 pub mod vfs;
 
 use crate::merkle_cb_tree::NodeId;

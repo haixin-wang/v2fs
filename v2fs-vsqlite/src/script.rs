@@ -1,9 +1,7 @@
 use anyhow::Result;
 use std::fs;
 
-pub fn load_query_wkld(
-    workload_path: &str,
-) -> Result<Vec<String>> {
+pub fn load_query_wkld(workload_path: &str) -> Result<Vec<String>> {
     let mut stms = Vec::new();
     let entire_file = fs::read_to_string(workload_path)?;
     let wkld_sqls = entire_file.split(';');
